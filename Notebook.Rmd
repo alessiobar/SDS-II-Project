@@ -1,0 +1,896 @@
+---
+title: "Final Project - Statistical Methods in Data Science II & Lab"
+author: "Barboni Alessio, 2027647"
+date: 13/09/2022
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, dpi = 500)
+```
+
+The dataset for this project was taken from an annual Kaggle competition called "2021 Kaggle Machine Learning & Data Science Survey" (more about it at https://www.kaggle.com/competitions/kaggle-survey-2021), whose objective is to "tell a data story about a subset of the data science community represented in this survey, through a combination of both narrative text and data exploration".
+
+Indeed, it is a survey consisting of 25,973 responses from participants working in the data science & ML engineering field, from 171 different countries. The questions asked were related to everything from the participants' background to their day-to-day experience, including their educational details, salary, preferred technologies and techniques.
+
+More details about the survey methodology are available in "kaggle_survey_2021_methodology.pdf" (cf. "supplementary_data" folder from the link above). 
+
+For this project, i will focus on the part of the data i am interested in the most, i.e. the one concerning European countries and data science as a job. 
+
+# Explanatory Data Analysis 
+
+```{r, warnings=FALSE}
+
+#Import Dataset
+suppressWarnings(library(readr))
+df <- read_csv("kaggle_survey_2021_responses.csv", show_col_types = FALSE)
+df[2:4,2:7]  #preview of the dataset
+```
+
+```{r, echo=FALSE}
+
+print(c(nrows = dim(df)[1], ncols = dim(df)[2]))
+```
+
+
+The dataset consists of 369 columns, quite a lot, although the questions were originally 42, but the responses to questions in which multiple choices could be selected were split into multiple columns.
+
+Most of the columns are categorical, the subset of them which is not ordinal will be split using dummy variables, thus substantially increasing the number of columns even beyond that number.  
+
+Hence, I will limit the analysis to the following columns:
+Q1 (Age), Q2 (Gender), Q3 (Country), Q4 (Education), Q5 (Role), Q6 (Experience), Q15 (Machine Learning Experience), Q20 (Industry), Q21 (Firm Size), Q22 (Data Scientists Employed in the firm), Q25 (Salary). After preprocessing (see the next section) I will end up having 40 columns.
+
+The remaining ones were more focused on personal habits and preferences (e.g., Which is your favourite IDE/programming language/etc), and for this reason were considered less useful for dealing with a regression problem. 
+
+### Preprocessing for EDA
+
+Let's drop NAs, similar values (e.g., "I prefer not to answer"), and very infrequent labels (e.g., the Non-binary gender).
+
+```{r, message=FALSE, warning=FALSE}
+
+#Subset Columns
+mycols <- c("Q1","Q2","Q3","Q4","Q5","Q6","Q15","Q20","Q21","Q22","Q25")
+df <- df[2:dim(df)[1], mycols]
+
+#Rename Columns
+new.col.names <- c("Age", "Gender", "Country", "Education", "Role", "Experience", "ML_Experience", "Industry", "firmSize", "DSs_employed", "Salary")
+names(df) <- new.col.names
+
+#Drop rows containing NAs & similars
+df$Education[df$Education == "I prefer not to answer"] <- NA
+df$Education[df$Country == "I do not wish to disclose my location"] <- NA
+df$Gender[df$Gender == "Prefer not to say"] <- NA
+df$Gender[df$Gender == "Prefer to self-describe"] <- NA
+df$Gender[df$Gender == "Nonbinary"] <- NA
+df <- df[complete.cases(df),] #dropna function
+
+#Subset rows containing only EU data and Data Science as Role 
+suppressWarnings(library(fastDummies))
+EU.countries <- c("Italy", "Belgium", "France", "Netherlands", "Portugal", "Denmark", "Czech Republic", "Poland", "Spain", "United Kingdom of Great Britain and Northern Ireland", "Switzerland", "Romania", "Ireland", "Germany", "Norway", "Finland", "Sweden") #the ones contained in the dataset
+df <- df[which(df$Country %in% EU.countries),]
+df <- df[which(df$Role =="Data Scientist"),]
+df <- subset(df, select=-c(Role)) #drop column having now all equal entries
+```
+
+Below there are some plots representing the distribution of the various features of the dataset:
+
+```{r, echo = FALSE}
+
+#Plots
+suppressWarnings(library(ggplot2))
+ 
+# Stacked Barchart of Age Distribution & Gender
+ggplot(data.frame(table(df[,c("Age","Gender")])), aes(fill=Gender,y=Freq, x=Age, label=Freq)) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(size = 3, position = position_stack(vjust = 0.5)) +
+  ggtitle("Age Distribution of Respondents") + xlab("Age Classes") + ylab("Frequency") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values=c("#55cbf6", "#ffb3e6"))
+
+```
+
+```{r, echo = FALSE}
+
+##Stacked Barchart of Salary Distribution & Gender
+df1 <- df
+foo <- function(x){
+  x <- gsub("[\\$,]", "", x)
+  x <- substr(x,1,gregexpr("-", x)[[1]][1]-1)
+  return(strtoi(x))}
+
+lbls <- names(sort(sapply(unique(df1$Salary), foo)))
+ggplot(data.frame(table(df1[,c("Salary","Gender")])), aes(fill=Gender,y=Freq, x=Salary, label=Freq)) +   geom_bar(position="stack", stat="identity") +
+  geom_text(size = 3, position = position_stack(vjust = 0.5)) +
+  ggtitle("Salary Distribution of Respondents") + xlab("Salary Classes") + ylab("Frequency") +
+  theme(plot.title = element_text(hjust = 0.5) , 
+axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_fill_manual(values=c("#66ff66", "#d9b3ff")) + scale_x_discrete(labels= lbls)
+
+```
+
+```{r, echo = FALSE}
+
+df1 <- df
+df1$Education[df1$Education=="Some college/university study without earning a bachelor’s degree"] <- "Some university study without degree"
+df1$Education[df1$Education=="No formal education past high school"] <- "None"
+df1$Country[df1$Country=="United Kingdom of Great Britain and Northern Ireland"] <- "UK"
+
+df1.1 <- df1[which(df1$Education == "Bachelor’s degree"| df1$Education == "Master’s degree" | df1$Education == "Doctoral degree"),]
+ggplot(data.frame(table(df1.1[,c("Education","Country")])), aes(fill=Country,y=Freq, x=Education, label=Freq)) + 
+  geom_bar(position="stack", stat="identity", color="black") + 
+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+   ggtitle("Education Distribution of Respondents") 
+
+
+df1.2 <- df1[which(df1$Education == "Professional doctorate"| df1$Education == "Some university study without degree" | df1$Education == "None"),]
+ggplot(data.frame(table(df1.2[,c("Education","Country")])), aes(fill=Country,y=Freq, x=Education, label=Freq)) + 
+  geom_bar(position="stack", stat="identity") + 
+   ggtitle("Education Distribution of Respondents (2nd part)") +
+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE}
+
+suppressWarnings(library(tidyverse))
+suppressWarnings(library(sf))
+suppressWarnings(library(rnaturalearth))
+suppressWarnings(library(rnaturalearthdata))
+world_map <- ne_countries(scale = 50, returnclass = 'sf')
+# Member States of the European Union
+european_union <- c("Belgium", "Czech Rep.", "Denmark", "France", "Germany", "Ireland", "Italy", "Netherlands", "Norway", "Poland", "Portugal", "Romania", "Spain", "Sweden", "Switzerland", "United Kingdom",
+"Finland","Austria","Bulgaria","Croatia","Cyprus","Estonia","Greece","Hungary","Latvia",
+"Lithuania","Luxembourg","Slovakia","Slovenia","Ukraine")
+  
+european_union_map <- 
+  world_map %>% 
+  filter(name %in% european_union)
+bbox_europe <- st_bbox(c(xmin = -10, ymin = 20, xmax = 50, ymax = 80), crs = st_crs(european_union_map))
+european_union_map_cropped <- st_crop(european_union_map, bbox_europe)
+
+map.df <- tibble(country = european_union, freq = c(unname(table(df$Country)), rep(0,14)))
+map <- european_union_map_cropped %>% left_join(map.df, by = c("name" = "country"))
+
+ggplot(data = map) +
+  geom_sf(mapping = aes(fill = freq)) +
+  scale_fill_gradient(name = "Number of Respondents", low = "#FFFFFFFF", high = "#1eddff", na.value = "grey50") + labs(title = "Distribution of respondents across Europe") +
+  theme(plot.title.position = "plot")
+```
+
+```{r, echo = FALSE}
+
+set.seed(2022)
+suppressWarnings(library(RColorBrewer))
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+
+bp<- ggplot(setNames(data.frame(table(df$Industry)),c("Industry","Freq")), aes(x="", y=Freq, fill=Industry))+
+geom_bar(width = 1, stat = "identity", color="black")+
+   ggtitle("Industry Distribution of Respondents") 
+pie <- bp + coord_polar("y", start=0) +  scale_fill_manual(values=sample(col_vector,length(unique(df$Industry))))
+pie
+```
+
+Respondents grouped by Experience:
+```{r, echo =FALSE}
+
+suppressWarnings(library(knitr))
+tmp.0 <- setNames(data.frame(table(df$Experience)), c("Experience", "Frequency"))
+knitr::kable(tmp.0[order(tmp.0$Freq, decreasing = T),])
+```
+
+Respondents grouped by Machine Learning Experience:
+```{r, echo =FALSE}
+
+suppressWarnings(library(knitr))
+df1<-df
+df1$ML_Experience[df1$ML_Experience=="I do not use machine learning methods"] <- "Never used"
+tmp.1 <- setNames(data.frame(table(df1$ML_Experience)), c("ML Experience", "Frequency"))
+knitr::kable(tmp.1[order(tmp.1$Freq, decreasing = T),])
+```
+
+The whole dataset is made of categorical varibles only, hence a correlation matrix cannot be computed. 
+The data is not normalized.
+
+# Statistical Model 
+
+The statistical model for this analysis will focus on the Salary, that as an aspiring data scientist might be of some interest to me.
+
+Since it is a categorical ordinal column made of levels ("\$0-999", "\$1,000-1,999", ...), i have decided to approach this problem as a regression one, after an adequate mapping (see below), in order not to leave this characteristic unexploited. In fact, that would be the case e.g. in a One-vs-all classification, where classifying "\$0-999" as "\$1,000-1,999" would have the same weight in terms of error of predicting "\$50,000-100,000" instead.
+
+### Data Preparation for Modelling    
+
+Categorical ordinal columns will be mapped into numerical ones trying to maintain their original meaning. For the ones representing ranges, e.g. Age, the labels will be substituted by their means ("22-24" --> 23), since not all the intervals have the same size and thus a 1-to-n mapping would not be suitable; For the rest instead, e.g. Education, the labels will be replaced by numbers from 1 to n, depending on how many levels that variable has.
+
+```{r, warnings=FALSE}
+
+#Age Column Mapping (approx)
+age.num.conv <- function(x){
+  if(x=="18-21") return(19)
+  if(x=="22-24") return(23)
+  if(x=="25-29") return(27)
+  if(x=="30-34") return(32)
+  if(x=="35-39") return(37)
+  if(x=="40-44") return(42)
+  if(x=="45-49") return(47)
+  if(x=="50-54") return(52)
+  if(x=="55-59") return(57)
+  if(x=="60-69") return(64)
+  else return(70)}
+df$Age <- unname(sapply(df$Age, age.num.conv))
+
+#Education Column Mapping
+edu.num.conv <- function(x){
+  if(x=="No formal education past high school") return(1)
+  if(x=="Some college/university study without earning a bachelor’s degree") return(2)
+  if(x=="Bachelor’s degree") return(3)
+  if(x=="Master’s degree") return(4)
+  if(x=="Doctoral degree") return(5)
+  if(x=="Professional doctorate") return(6)
+  else return("error")}
+df$Education <- unname(sapply(df$Education, edu.num.conv))
+
+#Experience Column Mapping (approx)
+exp.num.conv <- function(x){
+  if(x=="< 1 years") return(0)
+  if(x=="1-3 years") return(2)
+  if(x=="3-5 years") return(4)
+  if(x=="5-10 years") return(7)
+  if(x=="10-20 years") return(15)
+  if(x=="20+ years") return(20)}
+df$Experience <- unname(sapply(df$Experience, exp.num.conv))
+
+#ML Experience Column Mapping (approx)
+ml.exp.num.conv <- function(x){
+  if(x=="I do not use machine learning methods") return(0)
+  if(x=="Under 1 year") return(0.5)
+  if(x=="1-2 years") return(1.5)
+  if(x=="2-3 years") return(2.5)
+  if(x=="3-4 years") return(3.5)
+  if(x=="4-5 years") return(4.5)
+  if(x=="5-10 years") return(7.5)
+  if(x=="10-20 years") return(15)
+  if(x=="20 or more years") return(20)}
+df$ML_Experience <- unname(sapply(df$ML_Experience, ml.exp.num.conv))
+
+#FirmSize Column Mapping (approx)
+firmSize.num.conv <- function(x){
+  if(x=="0-49 employees") return(24.5)
+  if(x=="50-249 employees") return(149.5)
+  if(x=="250-999 employees") return(624.5)
+  if(x=="1000-9,999 employees") return(5499.5)
+  if(x=="10,000 or more employees") return(10000)}
+df$firmSize <- unname(sapply(df$firmSize, firmSize.num.conv))
+
+#Data Scientist Employed Column Mapping (approx)
+dssemp.num.conv <- function(x){
+  if(x=="0") return(0)
+  if(x=="1-2") return(1.5)
+  if(x=="3-4") return(3.5)
+  if(x=="5-9") return(7)
+  if(x=="10-14") return(12)
+  if(x=="15-19") return(17)
+  if(x=="20+") return(20)}
+df$DSs_employed <- unname(sapply(df$DSs_employed, dssemp.num.conv))
+
+#Salary Column Mapping (approx)
+salary.nums.conv <- function(x){
+  if(x=="$0-999") return(500) #!!
+  if(x=="1,000-1,999") return(1500)
+  if(x=="2,000-2,999") return(2500)
+  if(x=="3,000-3,999") return(3500)
+  if(x=="4,000-4,999") return(4500)
+  if(x=="5,000-7,499") return(6250)
+  if(x=="7,500-9,999") return(8750)
+  if(x=="10,000-14,999") return(12500)
+  if(x=="15,000-19,999") return(17500)
+  if(x=="20,000-24,999") return(22500)
+  if(x=="25,000-29,999") return(27500)
+  if(x=="30,000-39,999") return(35000)
+  if(x=="40,000-49,999") return(45000)
+  if(x=="50,000-59,999") return(55000)
+  if(x=="60,000-69,999") return(65000)
+  if(x=="70,000-79,999") return(75000)
+  if(x=="80,000-89,999") return(85000)
+  if(x=="90,000-99,999") return(95000)
+  if(x=="100,000-124,999") return(112500)
+  if(x=="125,000-149,999") return(137500)
+  if(x=="150,000-199,999") return(175000)
+  if(x=="200,000-249,999") return(225000)
+  if(x=="250,000-299,999") return(275000)
+  if(x=="300,000-499,999") return(400000)
+  if(x=="$500,000-999,999") return(750000)
+  else return(1000000)}
+df$Salary <- unname(sapply(df$Salary, salary.nums.conv))
+
+#Eventually, i.e. to predict on a test set, we'd need to convert the response label back using this function..
+salary.class.conv <- function(x){
+  if(x<=999) return("$0-999")
+  if(1000<=x & x<=1999) return("1,000-1,999")
+  if(2000<=x & x<=2999) return("2,000-2,999")
+  if(3000<=x & x<=3999) return("3,000-3,999")
+  if(4000<=x & x<=4999) return("4,000-4,999")
+  if(5000<=x & x<=7499) return("5,000-7,499")
+  if(7500<=x & x<=9999) return("7,500-9,999")
+  if(10000<=x & x<=14999) return("10,000-14,999")
+  if(15000<=x & x<=19999) return("15,000-19,999")
+  if(20000<=x & x<=24999) return("20,000-24,999")
+  if(25000<=x & x<=29999) return("25,000-29,999")
+  if(30000<=x & x<=39999) return("30,000-39,999")
+  if(40000<=x & x<=49999) return("40,000-49,999")
+  if(50000<=x & x<=59999) return("50,000-59,999")
+  if(60000<=x & x<=69999) return("60,000-69,999")
+  if(70000<=x & x<=79999) return("70,000-79,999")
+  if(80000<=x & x<=89999) return("80,000-89,999")
+  if(90000<=x & x<=99999) return("90,000-99,999")
+  if(100000<=x & x<=124999) return("100,000-124,999")
+  if(125000<=x & x<=149999) return("125,000-149,999")
+  if(150000<=x & x<=199999) return("150,000-199,999")
+  if(200000<=x & x<=249999) return("200,000-249,999")
+  if(250000<=x & x<=299999) return("250,000-299,999")
+  if(300000<=x & x<=499999) return("300,000-499,999")
+  if(500000<=x & x<=999999) return("$500,000-999,999")
+  else return(">$1,000,000")}
+```
+
+The remaining part, i.e. categorical non ordinal features, will be handled using dummy variables.
+
+```{r, warnings=FALSE}
+
+df <- dummy_cols(df, select_columns = c("Gender","Industry","Country"), remove_selected_columns = T)
+```
+
+### Train-test split
+
+Regarding the train-test split, since the response variable was originally categorical, a stratified random split might be more suited for this type of problem. The partition will be a 80-20.
+
+```{r, message=FALSE, warning=FALSE}
+
+#Stratified sampling
+suppressWarnings(library(caret, quietly = T))
+idx <- createDataPartition(df$Salary, p = .8, list = FALSE)
+train <- df[idx,]
+test  <- df[-idx,]
+```
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+
+cat("Train set dimension: ", dim(train)[1], " rows, ", dim(train)[2], " cols", sep="")
+cat("Test set dimension: ", dim(test)[1], " rows, ", dim(test)[2], " cols", sep="")
+```
+
+
+### 1° Model: Multivariate Linear Regression Model
+
+The first statistical model for dealing with this data consists of the following multivariate linear regression:
+
+Likelihood: $\;\;y_i \sim \mathbb{N}(\mu_i, \tau^2), \;\;\; \mu_i=f(x_{i,1},\,..,x_{i,n})=\beta_1+\beta_2 x_{i,1}+\,...+\beta_n x_{i,n}$.
+
+Each salary value $y_i$ is drawn at random from a normal distribution with mean $\mu_i$, which linearly depends on all the features of the dataset, and precision $\tau^2$. $\beta_1$ is the intercept of the regression, while $\beta_2,\,.., \beta_n$ are the coefficients of the variables.
+
+Priors: $\;\;\beta_j \sim \mathbb{N}(\mu_0, \sigma_0^2) \; \forall \;j, \;\; \sigma \sim gamma(shape,\;rate) \:$ where $\beta_j \in (-\infty,\infty), \; \sigma \in (0,\infty)$ and the precision $\tau^2 = \frac{1}{\sigma^2}$.
+
+For the regression coefficients $\beta_1,\,.., \beta_n$ a normal distribution was chosen in order to make extreme values less likely. Yet, since its difficult to figure out their scale a priori, given that they model the fit of a linear regression onto a population more than the population itself, the parameter choice for the prior would be set to be rather uninformative (mean: 0, var: 10).
+
+Regarding $\sigma$ instead, a gamma distribution was selected, since it has its support in $\;(0, \infty)$ and its shape still resembles a gaussian distribution with a certain choice of shape and rate parameters. The interpretability of this variable is much higher with respect to the betas, since it models the actual precision/variance of the Salary values $y_i$. As for its parameters, the choice was driven by my expectations of the European job market (that's another way of saying they are just arbitrary). I think that a mean of 40,000 and a variance of 10,000 might be reasonable (maybe even a bit conservative).
+
+Then: $\;\begin{cases} 40,000=\frac{s}{r} \\ 10,000=\frac{s}{r^2}\end{cases},\begin{cases} s=40,000\,r \\ 10,000=\frac{40,000\,r}{r^2}\end{cases} = \begin{cases} s=40,000\,r \\ r=\frac{40,000}{10,000}\end{cases} = ... = \begin{cases} s=160,000 \\ r=4\end{cases}$
+
+### Linear Model Assumptions Checking
+
+The linear regression model is based on several assumptions: Linearity, Homoscedasticity, Independence, Normality, No multicollinearity, etc... If some assumptions are violated the performance of the model would be poor.
+
+So, let's check some of them starting from multicollinearity by searching for large variance inflation factors (VIF).
+
+```{r, eval=FALSE}
+
+library(car)
+mod_summary <- car::vif(lm(Salary ~ ., data=train))
+```
+
+The code above would provide an error since there are "perfect multi-collinearity" cases among some variables of the dataset (e.g. the two dummy variables Gender_Man and Gender_Woman).
+
+Hence, let's find and drop such columns in the following way:
+
+```{r, warnings=FALSE}
+
+#Find aliased columns
+tmp <- summary(lm(Salary ~ ., data=train))$aliased
+names(tmp[tmp==TRUE])
+
+# Remove perfect multicollinear columns
+train <- subset(train, select=-c(Gender_Woman, `Industry_Shipping/Transportation`, `Country_United Kingdom of Great Britain and Northern Ireland`))
+test <- subset(test, select=-c(Gender_Woman, `Industry_Shipping/Transportation`, `Country_United Kingdom of Great Britain and Northern Ireland`))
+```
+
+Check again for VIF scores, the ones above the threshold of 10 will be dropped, if any. Below the highest 5 displayed.
+
+```{r, warnings=FALSE, message=FALSE}
+
+suppressWarnings(library(car))
+mod_summary <- car::vif(lm(Salary ~ ., data=train))
+knitr::kable(sort(mod_summary, decreasing=T)[1:5], col.names=c("VIF Score"))
+```
+
+No variable exceeds the threshold.
+
+Now, let's check for the homoscedasticity assumption, taking a look at the "residual vs fit" plot for a linear regression model.  
+
+```{r, warnings=FALSE}
+
+#Residuals vs Fitted
+dd <- lm(Salary ~ ., train)
+plot(dd)
+```
+
+The Residuals vs Fitted plot seems good enough, it appears that there isn't any notable trend or visible pattern suggesting the presence of heteroscedasticity (indicated typically by a funnel-shaped), or non-linear relationships (indicated sometimes by a U-shape). However, it's far from being perfect, in fact the variance seems to grow slightly with Y. This could be taken into account in the JAGS statistical model later on.
+
+### JAGS model 
+
+Now let's implement the statistical model in JAGS, taking care of the different parametrizations of R and JAGS (e.g., in R dnorm is parameterized as (mu, sd), whereas in JAGS as (mu, precision)). 
+
+First of all, JAGS requires the input in a specific format, i.e. a list having as elements all the x's, the y's, and the length of the dataset N. This is handled in the very first part of the code below. Then the JAGS model is specified as described above, *using JAGS syntax*, inside an R function (called "jags_model.0"). After this, the starting values for the parameters are computed drawing at random from their distribution, choosing the same parameters of the priors specified in the model. Finally, the model is run.
+
+The number of Markov chains is set to 3, that actually is the default value. "n.iter", i.e. the number of total iterations per chain, is instead set at 10,000 iterations (default: 2,000), and it includes a burn-in that has a default of $\frac{n.iter}{2}=5,000$ iterations. Also "n.thin" will maintain its default value (15 in this case).
+
+```{r, warnings=FALSE, message=FALSE}
+
+#import JAGS
+suppressMessages(library(R2jags, quietly = T))
+set.seed(42)
+
+#create input data for JAGS
+cols<-dim(train)[2]
+temp <- train[, c(1:6,8:cols,7)] #re-order columns
+df.jags.0 <- list()
+names(temp) <- c(paste("x", seq(1:(cols-1)), sep=""),"Y")
+for(i in 1:cols){
+  df.jags.0[colnames(temp[i])] <- temp[, i]
+}
+df.jags.0["N"] <- dim(temp)[1]
+
+#jags model specifications
+jags_model.0 <- function(){
+  #Likelihood specification
+  for(i in 1:N){
+    Y[i] ~ dnorm(mu[i], precision)
+    mu[i] <- beta[1] + beta[2]*x1[i] + beta[3]*x2[i] + beta[4]*x3[i] + beta[5]*x4[i] + beta[6]*x5[i] + beta[7]*x6[i] + beta[8]*x7[i] + beta[9]*x8[i] + beta[10]*x9[i] + beta[11]*x10[i] + beta[12]*x11[i] + beta[13]*x12[i] + beta[14]*x13[i] + beta[15]*x14[i] + beta[16]*x15[i] + beta[17]*x16[i] + beta[18]*x17[i] + beta[19]*x18[i] + beta[20]*x19[i] + beta[21]*x20[i] + beta[22]*x21[i] + beta[23]*x22[i] + beta[24]*x23[i] + beta[25]*x24[i] + beta[26]*x25[i] + beta[27]*x26[i] + beta[28]*x27[i] + beta[29]*x28[i] + beta[30]*x29[i] + beta[31]*x30[i] + beta[32]*x31[i] + beta[33]*x32[i] + beta[34]*x33[i] + beta[35]*x34[i] + beta[36]*x35[i] + beta[37]*x36[i] + beta[38]*x37[i]+ beta[39]*x38[i]+ beta[40]*x39[i]}
+  #Priors specification
+  for(j in 1:40){
+    beta[j] ~ dnorm(0, 0.01) # parameterized as (mu, precision) in JAGS, and this here is indeed JAGS syntax
+  }
+  sigma ~ dgamma(160000, 4) #shape and rate
+  precision <- 1/pow(sigma, 2) #precision = 1/(sd^2)
+}
+
+#set up model parameters
+params.0 <- c("beta","sigma")
+inits.0 <- list(beta = rnorm(40,0,sqrt(1/0.01)), sigma = rgamma(1,160000, 4))
+inits.1 <- list(beta = rnorm(40,0,sqrt(1/0.01)), sigma = rgamma(1,160000, 4))
+inits.2 <- list(beta = rnorm(40,0,sqrt(1/0.01)), sigma = rgamma(1,160000, 4)) # here, i.e. in R, rnorm is parameterized as (mu, sd), the 0.01 in the prior above from JAGS was the precision, so sd = 1/sqrt(0.01)
+init.values.0 <- list(inits.0, inits.1, inits.2)
+
+model.0 <- jags(data=df.jags.0, inits=init.values.0, parameters.to.save=params.0,
+              model.file=jags_model.0, n.chains=3, n.iter=10000, quiet = T)
+model.0
+```
+
+The table above shows the mean, sd and quantiles taken at different levels of the marginal posterior distribution for all the model parameters. 
+
+The range between the 2.5% and 97.5% quantiles is the 95% credible interval for each parameter (more on this later).
+
+The other metrics provided by JAGS are the deviance, the pD and the DIC.
+
+The first is defined as $–2*\log(p(y|\theta))$ and measures how well the model fits the data, so high values of the deviance tend to indicate that the data deviate substantially from the model’s assumptions. In general, it's a method used to compare two models, so the value obtained (i.e. 11,404) will be used later on in the model comparison section.
+
+The pD is the effective number of parameters, defined as the posterior mean of the deviance $\bar{D}$ minus the deviance of the posterior means $\hat{D}$.
+
+The last one is the Deviance Information Criterion, which is defined as $\bar{D} + pD$, and it is used to compare different models. The one with the smallest DIC is estimated to be the best choice to predict other datasets with similar structures. Also this metric will be used in the model comparison section.
+
+Now let's take a look at the trace plots, density plots and the running means for the parameters. The first typology is used to assess the "mixing of a chain", i.e. the time the Markov Chain needs to converge to the stationary distribution.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#import ggmcmc library
+suppressWarnings(library(ggmcmc))
+S <- ggs(as.mcmc(model.0))
+
+#workaround since beta is a vector of all betas..
+S.beta.1 <- S[which(S$Parameter=="beta[1]"),]
+S.beta.2 <- S[which(S$Parameter=="beta[2]"),]
+S.beta.17 <- S[which(S$Parameter=="beta[17]"),]
+
+#trace plots
+print("Trace plots:")
+ggs_traceplot(S, family = c("sigma"))
+ggs_traceplot(S.beta.1, family = c("beta"))
+ggs_traceplot(S.beta.2, family = c("beta"))
+ggs_traceplot(S.beta.17, family = c("beta"))
+
+```
+
+In all the trace plots shown, all the chains for each parameter seem to have a good mixing, since there are no flat parts (i.e. parts where the chain stays in the same state for too long) nor increasing/decreasing trends for too many consecutive steps. Instead, they are bouncing up and down, that is the preferred scenario for this kind of plots since it indicates that the chains could have reached the right distribution. However, it is not exactly perfect, since it seems to show some mild traits that are specific to marginal mixing. The chain in fact seems not to be taking (arguably) very large steps, and this would make it unable to traverse its distribution quickly (see picture below). This may be due to auto-correlation among the samples.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+S.plot <-as.mcmc(model.0$BUGSoutput$sims.array[,1,"beta[2]"])
+plot(S.plot, density = FALSE, main="Trace Plot of beta[2]'s - 1st Chain")
+```
+
+The burn-in for this model was 5,000 iterations, that thus have been discarded, so it can be expected that in that interval the behavior would have been more chaotic.
+
+Let's look at density plots now:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#marginal posterior distribution
+print("Posterior distributions:")
+plt.sigma <- model.0$BUGSoutput$sims.array[,,"sigma"]
+plot(density(plt.sigma[,1]), main="Marginal posterior distribution for sigma", lwd=2, col="red")
+lines(density(plt.sigma[,2])$x, density(plt.sigma[,2])$y, lwd=2, col="blue")
+lines(density(plt.sigma[,3])$x, density(plt.sigma[,3])$y, lwd=2, col ="green")
+legend("topright", legend=c("1st Chain", "2nd Chain", "3rd Chain"), col=c("red", "blue", "green"), lty=1)
+
+plt.beta.1 <- model.0$BUGSoutput$sims.array[,,"beta[1]"]
+plot(density(plt.beta.1[,1]), main="Marginal posterior distribution for beta[1]", lwd=2, col="red")
+lines(density(plt.beta.1[,2])$x, density(plt.beta.1[,2])$y, lwd=2, col="blue")
+lines(density(plt.beta.1[,3])$x, density(plt.beta.1[,3])$y, lwd=2, col ="green")
+legend("topright", legend=c("1st Chain", "2nd Chain", "3rd Chain"), col=c("red", "blue", "green"), lty=1)
+
+plt.beta.2 <- model.0$BUGSoutput$sims.array[,,"beta[2]"]
+plot(density(plt.beta.2[,3]), main="Marginal posterior distribution for beta[2]", lwd=2, col="red")
+lines(density(plt.beta.2[,2])$x, density(plt.beta.2[,2])$y, lwd=2, col="blue")
+lines(density(plt.beta.2[,1])$x, density(plt.beta.2[,1])$y, lwd=2, col ="green")
+legend("topright", legend=c("1st Chain", "2nd Chain", "3rd Chain"), col=c("green", "blue", "red"), lty=1)
+
+plt.beta.17 <- model.0$BUGSoutput$sims.array[,,"beta[17]"]
+plot(density(plt.beta.17[,1]), main="Marginal posterior distribution for beta[17]", lwd=2, col="red")
+lines(density(plt.beta.17[,2])$x, density(plt.beta.17[,2])$y, lwd=2, col="blue")
+lines(density(plt.beta.17[,3])$x, density(plt.beta.17[,3])$y, lwd=2, col ="green")
+legend("topright", legend=c("1st Chain", "2nd Chain", "3rd Chain"), col=c("red", "blue", "green"), lty=1)
+```
+
+The three chains are very close to each other showing a converging behavior, hopefully on the target distribution itself.
+
+In the end, let's take a look at running means plots, that are useful to find within-chain convergence issues.
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+#running means
+print("Running Means:")
+ggs_running(S, family = c("sigma"))
+ggs_running(S.beta.1, family = c("beta"))
+ggs_running(S.beta.2, family = c("beta"))
+ggs_running(S.beta.17, family = c("beta"))
+```
+
+These plots seem far from being optimal, especially in some cases, yet they are not "diverging", they just are converging slowly once again due to the above-mentioned auto-correlation that might be present in the data. 
+
+### Other approaches to Convergence Diagnostics
+
+With such a large number of variables, it's difficult to check all the individual plots (even worse for the second model having a total of 742 features). Thankfully, there exist numerical indexes of convergence, two of which are present in the previous table (i.e. the jags model output), that are useful to flag those plots that require special attention.  
+
+- The first convergence diagnostic is $\hat{R}$, an index that should be ideally close to 1 (indeed it is 1 at convergence), and that measures how well the Markov chains have mixed. If its value is substantially larger than 1, the chains haven’t mixed properly and the posterior estimates cannot be trusted. In this case all the $\hat{R}$s $\in [1.001,\; 1.004]$, which is optimal. 
+
+- The other one is the effective sample size (n.eff or ESS). The higher the auto-correlation among the saved samples (here 3,000 in total), the smaller the n.eff will be, and the less reliable the inference from this sample would become. At convergence this would not be a problem, however these correlations would cause inefficiencies such as the slow movement of the simulation algorithm itself. In this case, the one having the smallest n.eff is $\beta_{17}$, with a value of 670 out of 3,000, that might be sufficient (indeed it seems it was), but for this reason it was included in the plots above. 
+
+### Error Control
+
+Let's evaluate the model performances on the test set. First of all, i have to generate the predictions for the test set:
+
+```{r, warning=FALSE, message=FALSE}
+
+#create new input data for JAGS
+cols<-dim(test)[2]
+temp <- test[, c(1:6,8:cols)] #drop salary column
+cols <- cols - 1 
+df.jags.pred <- df.jags.0 #let's append to the list used in model.0
+names(temp) <- c(paste("x.pred.", seq(1:(cols)), sep=""))
+for(i in 1:cols){
+  df.jags.pred[colnames(temp[i])] <- temp[,i]
+}
+
+#jags model specifications
+jags_model.pred <- function(){
+  #Likelihood specification
+  for(i in 1:N){
+    Y[i] ~ dnorm(beta[1] + beta[2]*x1[i] + beta[3]*x2[i] + beta[4]*x3[i] + beta[5]*x4[i] + beta[6]*x5[i] + beta[7]*x6[i] + beta[8]*x7[i] + beta[9]*x8[i] + beta[10]*x9[i] + beta[11]*x10[i] + beta[12]*x11[i] + beta[13]*x12[i] + beta[14]*x13[i] + beta[15]*x14[i] + beta[16]*x15[i] + beta[17]*x16[i] + beta[18]*x17[i] + beta[19]*x18[i] + beta[20]*x19[i] + beta[21]*x20[i] + beta[22]*x21[i] + beta[23]*x22[i] + beta[24]*x23[i] + beta[25]*x24[i] + beta[26]*x25[i] + beta[27]*x26[i] + beta[28]*x27[i] + beta[29]*x28[i] + beta[30]*x29[i] + beta[31]*x30[i] + beta[32]*x31[i] + beta[33]*x32[i] + beta[34]*x33[i] + beta[35]*x34[i] + beta[36]*x35[i] + beta[37]*x36[i] + beta[38]*x37[i]+ beta[39]*x38[i]+ beta[40]*x39[i], precision)}
+  for (j in 1:107){ #107 = dim(test)[1]
+    ypred[j] ~ dnorm(beta[1] + beta[2]*x.pred.1[j] + beta[3]*x.pred.2[j] + beta[4]*x.pred.3[j] + beta[5]*x.pred.4[j] + beta[6]*x.pred.5[j] + beta[7]*x.pred.6[j] + beta[8]*x.pred.7[j] + beta[9]*x.pred.8[j] + beta[10]*x.pred.9[j] + beta[11]*x.pred.10[j] + beta[12]*x.pred.11[j] + beta[13]*x.pred.12[j] + beta[14]*x.pred.13[j] + beta[15]*x.pred.14[j] + beta[16]*x.pred.15[j] + beta[17]*x.pred.16[j] + beta[18]*x.pred.17[j] + beta[19]*x.pred.18[j] + beta[20]*x.pred.19[j] + beta[21]*x.pred.20[j] + beta[22]*x.pred.21[j] + beta[23]*x.pred.22[j] + beta[24]*x.pred.23[j] + beta[25]*x.pred.24[j] + beta[26]*x.pred.25[j] + beta[27]*x.pred.26[j] + beta[28]*x.pred.27[j] + beta[29]*x.pred.28[j] + beta[30]*x.pred.29[j] + beta[31]*x.pred.30[j] + beta[32]*x.pred.31[j] + beta[33]*x.pred.32[j] + beta[34]*x.pred.33[j] + beta[35]*x.pred.34[j] + beta[36]*x.pred.35[j] + beta[37]*x.pred.36[j] + beta[38]*x.pred.37[j]+ beta[39]*x.pred.38[j]+ beta[40]*x.pred.39[j], precision)}
+  
+  #Priors specification
+  for(j in 1:40){
+    beta[j] ~ dnorm(0, 0.01) # parameterized as (mu, precision) in JAGS, and this here is indeed JAGS syntax
+  }
+  sigma ~ dgamma(160000, 4) #shape and rate
+  precision <- 1/pow(sigma, 2) #precision = 1/(sd^2)
+  
+}
+
+params.pred <- c("beta","gamma","ypred")
+model.pred <- jags(data=df.jags.pred, inits=init.values.0, parameters.to.save=params.pred,
+              model.file=jags_model.pred, n.chains=3, n.iter=10000, quiet = T)
+
+model.y.pred <- model.pred$BUGSoutput$mean$ypred
+```
+
+In the JAGS model above "Y", "X" and "X.pred" are data vectors, whereas "ypred" is a variable for storing predictions.
+
+Now, we can compute some scoring function, comparing the "ypred" vector (i.e. the one containing the posterior means of all y.pred variables) with the true label Y of the test set.
+
+```{r, message=FALSE, warning=FALSE}
+
+#RMSE on Validation Set
+sqrt(mean((test$Salary - model.y.pred)^2))
+```
+
+# 2° Model: 2nd-Order Multivariate Polynomial Regression
+
+The second statistical model consists of the following multivariate 2nd order polynomial regression:
+
+Likelihood: $\;\;y_i \sim \mathbb{N}(\mu_i, \tau^2), \;\;\; \mu_i=f(x_{i,1},\,..,x_{i,n})=\beta_1+\beta_2 x_{i,1}+\,...+\beta_k x_{i,n}+\beta_{k+1} x_{i,1}^2+\,...+\beta_{2k} x_{i,n}^2+$
+$\qquad\qquad\qquad\qquad\qquad\qquad\qquad\qquad\quad\;\,+\beta_{2k+1} x_{i,1}x_{i,2}+\,...+\beta_{m} x_{i,n-1}x_{i,n}$
+
+The priors specification and the choice of its parameters are equal to the one of the previous model. 
+
+This model will have a lot of coefficients to estimate, since there are 39 columns besides Salary, with a second order polynomial there will be $39 * \frac{(39-1)}{2}=741$ terms. This number is quite large, even more than the number of total observations of the train dataset. Hence, the code below will be used to write the formula that will be inserted into a jags txt file named "jagsModel.txt" (in order save space in this presentation). But the real problem is the training time, that on my machine takes several hours, so for this reason i will just run a single Markov chain for 3,000 iterations (instead of 3 chains, for 10,000 like in the previous model).
+
+```{r, eval=FALSE}
+
+#To write the JAGS model expression.. (this will be pasted into "jagsModel.txt")
+paste0("beta[1] + ",
+       paste0("beta[",c(2:40),"]","*","x",seq(1:39),"[i]", collapse=" + "),
+       " + ",
+       paste0("beta[",c(41:79),"]","*","x",c(1:39),"[i]**2", collapse=" + "),
+       " + ",
+       paste0("beta[",c(80:741),"]","*","x",combn(c(1:39), 2)[1,],"[i]*x",combn(c(1:39), 2)[2,],"[i]", collapse=" + ") #n(n-1)/2 w n=39
+       )
+```
+
+```{r, eval=TRUE, warnings=FALSE, cache=TRUE}
+
+#set up model parameters
+suppressWarnings(library(R2jags))
+params.1 <- c("beta","sigma")
+inits.1 <- list(beta = rnorm(741,0,sqrt(1/0.01)), sigma = rgamma(1,160000,4))
+init.values.1 <- list(inits.1)
+model.1 <- jags(data=df.jags.0, inits=init.values.1, parameters.to.save=params.1,
+              model.file="jagsModel.txt", n.chains=1, n.iter=3000, quiet = T)
+```
+
+```{r, echo=FALSE, warnings=FALSE, message=FALSE}
+
+t1 <- model.1$BUGSoutput$last.values[[1]]$deviance
+t2 <- model.1$BUGSoutput$DIC
+cat("2nd Model Deviance: ",t1, "\n","2nd Model DIC: ", t2, sep="")
+```
+
+Let's take a look at some convergence diagnostics and error control plots:
+  
+```{r, eval=TRUE, echo=FALSE}
+
+S <- ggs(as.mcmc(model.1))
+
+#workaround since beta is a vector of all betas..
+S.beta.1 <- S[which(S$Parameter=="beta[1]"),]
+S.beta.2 <- S[which(S$Parameter=="beta[2]"),]
+S.beta.741 <- S[which(S$Parameter=="beta[741]"),]
+
+#trace plots
+print("Trace plots:")
+ggs_traceplot(S, family = c("sigma"))
+ggs_traceplot(S.beta.1, family = c("beta"))
+ggs_traceplot(S.beta.2, family = c("beta"))
+ggs_traceplot(S.beta.741, family = c("beta"))
+
+#marginal posterior distribution
+print("Marginal posterior distribution:")
+plot(density(model.1$BUGSoutput$sims.array[,,"sigma"]), main="Marginal posterior distribution for sigma", lwd=2)
+plot(density(model.1$BUGSoutput$sims.array[,,"beta[1]"]), main="Marginal posterior distribution for beta[1]", lwd=2)
+plot(density(model.1$BUGSoutput$sims.array[,,"beta[2]"]), main="Marginal posterior distribution for beta[2]", lwd=2)
+plot(density(model.1$BUGSoutput$sims.array[,,"beta[741]"]), main="Marginal posterior distribution for beta[741]", lwd=2)
+
+#running means
+print("Running Means:")
+ggs_running(S, family = c("sigma"))
+ggs_running(S.beta.1, family = c("beta"))
+ggs_running(S.beta.2, family = c("beta"))
+ggs_running(S.beta.741, family = c("beta"))
+```
+
+The whole analysis presented above for the plots of the first model (i.e. "model.0") could be applied to the results of this model (i.e. "model.1").
+
+### Models Comparison 
+
+Let's now compare the two regression models using DIC. The multivariate linear regression model achieved a DIC score of 11,436.2, whereas the 2nd order multivariate regression one a score of 10,974.74. 
+
+Actually, the two models run for a different number of simulations, yet the second one achieved the best DIC score with a smaller "n.sim", but regardless of this both have shown a converging behavior in the end, hence larger values of "n.sim" would have probably not improved the score any further (or at least worsen the DIC score of the second model).
+
+Although it is generally difficult to say what constitutes an important difference in DIC to "declare a winner" between the two models, here since the difference is substantial (i.e., 461.46) we could conclude with some confidence that the second model will be better at predicting.   
+
+Also the deviance reflects the outcome of the previous DIC comparison, being the one for the first model larger than the one for the second model.
+
+# 3 Main Inferential Findings (for model.0)
+ 
+### Point Estimates for the parameters ($\sigma$, $\beta_1, \beta_2, ..\beta_{40}$)
+
+Let's compute some single point estimates:
+
+```{r, message=FALSE, warning=FALSE}
+
+# Mean
+sigma.mean <- model.0$BUGSoutput$mean$sigma
+beta.mean <- model.0$BUGSoutput$mean$beta
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+cat("Empirical Means:\n","sigma est.: ", round(sigma.mean, 3), ", ",  "beta[1] est.: ", round(beta.mean[1], 3), ", ", "beta[2] est.: ", round(beta.mean[2], 3), ", ..., ",  "beta[40] est.: ", round(beta.mean[40], 3), "\n","\n", sep="")
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# Median
+sigma.median <- median(model.0$BUGSoutput$sims.array[,,"sigma"])
+beta.1.median <- median(model.0$BUGSoutput$sims.array[,,"beta[1]"])
+beta.2.median <- median(model.0$BUGSoutput$sims.array[,,"beta[2]"])
+beta.40.median <- median(model.0$BUGSoutput$sims.array[,,"beta[40]"])
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+cat("Empirical Medians:\n","sigma median: ", round(sigma.median, 3), ", ",  "beta[1] median: ", round(beta.1.median, 3), ", ", "beta[2] median: ", round(beta.2.median, 3), ", ..., ",  "beta[40] median: ", round(beta.40.median, 3), "\n","\n", sep="")
+```
+
+
+### Interval Estimates for the parameters ($\sigma$, $\beta_1, \beta_2, ..\beta_{40}$)
+
+```{r, message=FALSE, warning=FALSE}
+
+sigma.eti <- quantile(model.0$BUGSoutput$sims.array[,,"sigma"], probs = c(0.025,0.975)) #at 95%
+sigma.eti.size <- unname(sigma.eti[2] - sigma.eti[1])
+
+beta.1.eti <- quantile(model.0$BUGSoutput$sims.array[,,"beta[1]"], probs = c(0.025,0.975)) #at 95%
+beta.1.eti.size <- unname(beta.1.eti[2] - beta.1.eti[1])
+
+beta.2.eti <- quantile(model.0$BUGSoutput$sims.array[,,"beta[2]"], probs = c(0.025,0.975)) #at 95%
+beta.2.eti.size <- unname(beta.2.eti[2] - beta.2.eti[1])
+
+beta.40.eti <- quantile(model.0$BUGSoutput$sims.array[,,"beta[40]"], probs = c(0.025,0.975)) #at 95%
+beta.40.eti.size <- unname(beta.40.eti[2] - beta.40.eti[1])
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+cat("sigma 95% ETI", sigma.eti, "\n", "sigma 95% ETI Size", sigma.eti.size,
+    "beta[1] 95% ETI", beta.1.eti, "\n", "beta[1] 95% ETI Size", beta.1.eti.size,
+    "beta[2] 95% ETI", beta.2.eti, "\n", "beta[2] 95% ETI Size", beta.2.eti.size,
+    "beta[40] 95% ETI", beta.40.eti, "\n", "beta[40] 95% ETI Size", beta.40.eti.size,
+    sep="")
+```
+
+
+### Hypothesis testing for the parameters ($\sigma$, $\beta_1, \beta_2, ..\beta_{40}$)
+
+Let's check for a bunch of hypotheses on several parameters:
+
+- For sigma let $H_0: \sigma>40,000, \; H_1: \sigma\leq 40,000$. The value 40,000 was the one i selected for sigma prior distribution's mean.
+
+The two alternative hypothesis will be compared using the Bayes Factor $B_{01}=\frac{odds(E|M_2)}{odds(E|M_1)}$ where $odds(E)=\frac{p}{1-p}$, $odds(E|M_2)=$ prior model, $odds(E|M_1)=$ posterior model.
+
+
+```{r, message=FALSE, warning=FALSE}
+
+#Posterior Probability for H0 
+sigma.post.cdf <- ecdf(model.0$BUGSoutput$sims.array[,,"sigma"][,1]) #empirical cdf of sigma using JAGS simulated values
+p.post <- 1 - sigma.post.cdf(40000) #i.e. prob y > 40,000
+
+#Prior Probability for H0
+p.prior <- 1 - pgamma(40000, 160000, 4) 
+
+#Bayes Factor
+BF <- p.post*(1-p.post)/(p.prior*(1-p.prior))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+plot(sigma.post.cdf, main="Posterior and Prior CDFs of Sigma", col="blue", ylab="Y", lwd=2)
+curve(pgamma(x, 160000, 4), add=T, col="red", lwd=2)
+legend("bottomright", legend=c("Posterior CDF", "Prior CDF"), col=c("blue", "red"), lty=1)
+```
+
+```{r, echo=FALSE}
+
+cat("Post Prob for Y > 40,000:", p.post, "\n")
+cat("Prior Prob for Y > 40,000:", p.prior, "\n")
+cat("Bayes Factor:", BF)
+```
+
+Since $BF_{10} \approx \frac{1}{12}$, there is strong evidence for the null hypothesis $H_0$ that would thus not be rejected.
+
+- For $\beta_1$ let $H_0: \beta_1>0, \; H_1: \beta_1\leq 0$. Again, the value 0 was the one i selected for the betas prior distribution's mean.
+
+```{r, message=FALSE, warning=FALSE}
+
+#Posterior Probability for H0 
+beta.post.cdf <- ecdf(model.0$BUGSoutput$sims.array[,,"beta[1]"][,1]) #empirical cdf of beta.1 using JAGS simulated values
+p.post <- 1 - beta.post.cdf(0) #i.e. prob y > 0
+
+#Prior Probability for H0
+p.prior <- 1 - pnorm(0, 0, sqrt(1/0.01)) 
+
+#Bayes Factor
+BF <- p.post*(1-p.post)/(p.prior*(1-p.prior))
+```
+
+```{r, echo=FALSE}
+plot(beta.post.cdf, main="Posterior and Prior CDFs of Beta[1]", col="blue", ylab="Y", lwd=2)
+curve(pnorm(x, 0, sqrt(1/0.01)), add=T, col="red", lwd=2)
+legend("bottomright", legend=c("Posterior CDF", "Prior CDF"), col=c("blue", "red"), lty=1)
+```
+
+```{r, echo=FALSE}
+
+cat("Post Prob for Y > 0:", p.post, "\n")
+cat("Prior Prob for Y > 0:", p.prior, "\n")
+cat("Bayes Factor:", BF)
+```
+
+Since $BF_{10} \approx 1$, there is no evidence to draw any conclusion.
+
+- For $\beta_2$ let $H_0: \beta_1>0, \; H_1: \beta_1\leq 0$. Again, the value 0 was the one i selected for the betas prior distribution's mean.
+
+```{r, message=FALSE, warning=FALSE}
+
+#Posterior Probability for H0 
+beta.post.cdf <- ecdf(model.0$BUGSoutput$sims.array[,,"beta[2]"][,1]) #empirical cdf of beta.2 using JAGS simulated values
+p.post <- 1 - beta.post.cdf(0) #i.e. prob y > 0
+
+#Prior Probability for H0
+p.prior <- 1 - pnorm(0, 0, sqrt(1/0.01)) 
+
+#Bayes Factor
+BF <- p.post*(1-p.post)/(p.prior*(1-p.prior))
+```
+
+```{r, echo=FALSE}
+plot(beta.post.cdf, main="Posterior and Prior CDFs of Beta[2]", col="blue", ylab="Y", lwd=2)
+curve(pnorm(x, 0, sqrt(1/0.01)), add=T, col="red", lwd=2)
+legend("bottomright", legend=c("Posterior CDF", "Prior CDF"), col=c("blue", "red"), lty=1)
+```
+
+```{r, echo=FALSE}
+
+cat("Post Prob for Y > 0:", p.post, "\n")
+cat("Prior Prob for Y > 0:", p.prior, "\n")
+cat("Bayes Factor:", BF)
+```
+
+Since $BF_{10} \approx \frac{1}{250}$, there is extreme evidence in favor of $H_0$, that would thus not be rejected.
+
+- For $\beta_{40}$ let $H_0: \beta_1>0, \; H_1: \beta_1\leq 0$. Again, the value 0 was the one i selected for the betas prior distribution's mean.
+
+```{r, message=FALSE, warning=FALSE}
+
+#Posterior Probability for H0 
+beta.post.cdf <- ecdf(model.0$BUGSoutput$sims.array[,,"beta[40]"][,1]) #empirical cdf of beta.40 using JAGS simulated values
+p.post <- 1 - beta.post.cdf(0) #i.e. prob y > 0
+
+#Prior Probability for H0
+p.prior <- 1 - pnorm(0, 0, sqrt(1/0.01)) 
+
+#Bayes Factor
+BF <- p.post*(1-p.post)/(p.prior*(1-p.prior))
+```
+
+```{r, echo=FALSE}
+plot(beta.post.cdf, main="Posterior and Prior CDFs of Beta[40]", col="blue", ylab="Y", lwd=2)
+curve(pnorm(x, 0, sqrt(1/0.01)), add=T, col="red", lwd=2)
+legend("bottomright", legend=c("Posterior CDF", "Prior CDF"), col=c("blue", "red"), lty=1)
+```
+
+```{r, echo=FALSE}
+
+cat("Post Prob for Y > 0:", p.post, "\n")
+cat("Prior Prob for Y > 0:", p.prior, "\n")
+cat("Bayes Factor:", BF)
+```
+
+Since $BF_{10} \approx 1$, there is no evidence to draw any conclusion.
